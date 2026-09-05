@@ -1,6 +1,9 @@
 import streamlit as st
 import numpy as np
-from PIL import Image
+import threading
+import av
+import cv2
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 
 st.set_page_config(
     page_title="Inspector Liddy",
@@ -8,6 +11,47 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# STUN lets WebRTC punch through NAT. Google's public server does this for free.
+# A TURN server would be more reliable but costs money. She works with what she has.
+RTC_CONFIG = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+
+
+class LiddyProcessor(VideoProcessorBase):
+    """
+    Runs YOLO on every 10th frame in a background thread.
+    The video stays smooth. The Inspector stays informed.
+    She does not miss much. She misses 9 out of 10 frames. The 10th is enough.
+    """
+    def __init__(self):
+        self.detector    = None
+        self.latest_dets = []
+        self.frame_size  = (640, 480)
+        self.frame_count = 0
+        self._lock       = threading.Lock()
+
+    def recv(self, frame):
+        img_bgr = frame.to_ndarray(format="bgr24")
+        img_rgb = img_bgr[:, :, ::-1]
+        h, w    = img_rgb.shape[:2]
+
+        self.frame_count += 1
+        if self.frame_count % 10 == 0 and self.detector is not None:
+            dets = self.detector.detect(img_rgb)
+            with self._lock:
+                self.latest_dets = dets
+                self.frame_size  = (w, h)
+
+        with self._lock:
+            dets = list(self.latest_dets)
+
+        annotated = self.detector.annotate(img_rgb, dets) if (dets and self.detector) else img_rgb
+        return av.VideoFrame.from_ndarray(annotated[:, :, ::-1], format="bgr24")
+
+    def get_latest(self):
+        with self._lock:
+            return list(self.latest_dets), self.frame_size
+
 
 # Clue-style. Crimson, gold, near-black, aged parchment.
 # Not a single default Streamlit blue survived this file.
@@ -394,9 +438,11 @@ def _new_game():
     st.session_state.liddy       = InspectorLiddy(m, sid)
     st.session_state.detector    = YOLODetector()
     st.session_state.lidar       = LIDARMap()
-    st.session_state.game_over   = False
-    st.session_state.accusation  = None
-    st.session_state.last_cam_id = None
+    st.session_state.game_over      = False
+    st.session_state.accusation     = None
+    st.session_state.last_narration = None
+    st.session_state.last_dets      = []
+    st.session_state.last_room      = None
 
 
 def _suspect_card(name, prob):
@@ -499,63 +545,69 @@ def main():
     with col_left:
         st.markdown("<div class='section-label'>Crime Scene Surveillance</div>", unsafe_allow_html=True)
 
+        # Live feed -- YOLO runs on every 10th frame in the background thread.
+        # The user sees annotated video in real time. The Inspector sees everything.
+        ctx = webrtc_streamer(
+            key="liddy-cam",
+            video_processor_factory=LiddyProcessor,
+            rtc_configuration=RTC_CONFIG,
+            media_stream_constraints={"video": True, "audio": False},
+            async_processing=True,
+        )
+
+        if ctx.video_processor:
+            ctx.video_processor.detector = detector
+
         if not st.session_state.game_over:
-            cam_photo = st.camera_input(
-                "Aim camera at the scene -- capture when ready",
-                key="cam_feed",
-            )
+            if st.button("Scan Current Frame", use_container_width=True):
+                if ctx.video_processor:
+                    dets, (fw, fh) = ctx.video_processor.get_latest()
+                else:
+                    dets, fw, fh = [], 640, 480
 
-            if cam_photo is not None:
-                cam_id = id(cam_photo)
-                if cam_id != st.session_state.last_cam_id:
-                    st.session_state.last_cam_id = cam_id
-
-                    img     = Image.open(cam_photo).convert("RGB")
-                    img_arr = np.array(img)
-
-                    detections = detector.detect(img_arr)
-                    annotated  = detector.annotate(img_arr, detections)
-
-                    st.image(
-                        annotated,
-                        caption=f"Evidence Photograph No. {state['scans'] + 1}",
-                        use_container_width=True,
-                    )
-
-                    lidar.update(detections, img_arr.shape[1], img_arr.shape[0])
-                    narration = liddy.scan(detections)
-
-                    st.markdown(
-                        f"<div class='narration-box'>{narration}</div>",
-                        unsafe_allow_html=True,
-                    )
-
+                if dets:
                     from game.world import YOLO_TO_ROOM
                     from collections import Counter
-                    detected_labels = [d["class"] for d in detections]
-                    detected_rooms  = [YOLO_TO_ROOM[l] for l in detected_labels if l in YOLO_TO_ROOM]
-                    if detected_rooms:
-                        room_call = Counter(detected_rooms).most_common(1)[0][0]
-                        st.markdown(
-                            f"<div class='room-badge'>"
-                            f"Location identified &nbsp;&mdash;&nbsp; <strong>{room_call}</strong>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
-                    elif detections:
-                        st.markdown(
-                            f"<div class='room-badge' style='border-left-color:#3a1a0a;color:#5a3a1a;'>"
-                            f"Detected: {', '.join(detected_labels)}"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.markdown(
-                            "<div class='room-badge' style='border-left-color:#3a1a0a;color:#4a2a0a;'>"
-                            "Nothing identified. She notes the absence as much as the presence."
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
+
+                    lidar.update(dets, fw, fh)
+                    narration = liddy.scan(dets)
+                    st.session_state.last_narration = narration
+                    st.session_state.last_dets      = dets
+
+                    detected_rooms = [YOLO_TO_ROOM[d["class"]] for d in dets if d["class"] in YOLO_TO_ROOM]
+                    st.session_state.last_room = (
+                        Counter(detected_rooms).most_common(1)[0][0] if detected_rooms else None
+                    )
+                else:
+                    st.session_state.last_narration = (
+                        "Nothing identified in the current frame. "
+                        "She waits. She is good at waiting."
+                    )
+                    st.session_state.last_dets = []
+                    st.session_state.last_room = None
+
+            # Display the result of the last scan (persists across reruns)
+            if st.session_state.get("last_narration"):
+                st.markdown(
+                    f"<div class='narration-box'>{st.session_state.last_narration}</div>",
+                    unsafe_allow_html=True,
+                )
+
+            if st.session_state.get("last_room"):
+                st.markdown(
+                    f"<div class='room-badge'>"
+                    f"Location identified &nbsp;&mdash;&nbsp; <strong>{st.session_state.last_room}</strong>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            elif st.session_state.get("last_dets"):
+                labels = [d["class"] for d in st.session_state.last_dets]
+                st.markdown(
+                    f"<div class='room-badge' style='border-left-color:#3a1a0a;color:#5a3a1a;'>"
+                    f"Detected: {', '.join(labels)}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
         else:
             st.markdown(
                 "<div class='narration-box'>The investigation is closed. "
