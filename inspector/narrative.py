@@ -22,7 +22,7 @@ OBSERVATION = [
 ROOM_DEDUCTION = [
     "This is the {room}. She has catalogued it. The walls have already told her more than they intended.",
     "The {room}. Of course. Sir Edmund had reasons to be here. Someone had reasons to follow.",
-    "She stands in the {room} and sees it immediately -- the room knows what happened.",
+    "She stands in the {room} and sees it immediately.the room knows what happened.",
     "The {room}. She makes a note. Not a long note. She rarely needs long notes.",
 ]
 
@@ -30,7 +30,7 @@ DEDUCTION = [
     "{suspect} rises in her estimation. Not fondly.",
     "The evidence circles back to {suspect}. As she suspected it would.",
     "A {weapon} is not a weapon of impulse. This was deliberate. She respects deliberate.",
-    "The {room} -- of course. She wonders why it took the evidence this long to say what she already knew.",
+    "The {room}.of course. She wonders why it took the evidence this long to say what she already knew.",
     "She does not guess. She deduces. And she deduces {suspect}.",
     "The {weapon} implicates someone who understood exactly what they were doing. Most suspects do not.",
     "Her files on {suspect} are beginning to look rather damning. She had a feeling.",
@@ -38,7 +38,7 @@ DEDUCTION = [
 
 FORENSICS = [
     "The pattern holds. The suspect does not yet know that she has seen it.",
-    "Cross-referencing. She does this the way other people breathe -- automatically, and without congratulating herself.",
+    "Cross-referencing. She does this the way other people breathe.automatically, and without congratulating herself.",
     "Everything points somewhere. She follows the finger while everyone else stares at it.",
     "The forensic picture is forming. It is not a flattering portrait. It was never going to be.",
 ]
@@ -57,7 +57,7 @@ def intro():
 
 def on_observation(objects):
     if not objects:
-        return "Nothing of note in the immediate frame. She continues. Patience is not a virtue to her -- it is a tool."
+        return "Nothing of note in the immediate frame. She continues. Patience is not a virtue to her.it is a tool."
     line = random.choice(OBSERVATION)
     return line.format(obj=objects[0])
 

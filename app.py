@@ -7,22 +7,452 @@ from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfigurati
 
 st.set_page_config(
     page_title="Inspector Liddy",
-    page_icon="🕯",
+    page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# STUN lets WebRTC punch through NAT. Google's public server does this for free.
-# A TURN server would be more reliable but costs money. She works with what she has.
 RTC_CONFIG = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+
+SUSPECT_COLORS = {
+    "Lord Blackwood":     "#3b82f6",
+    "Lady Ashford":       "#a855f7",
+    "Dr. Pembrooke":      "#22c55e",
+    "Colonel Ravenswood": "#ef4444",
+    "Miss Thorne":        "#06b6d4",
+    "Graves the Butler":  "#94a3b8",
+}
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+[data-testid="stApp"] {
+    background: #08080f;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #e2e2f0;
+}
+
+[data-testid="stSidebar"] {
+    background: #0a0a12 !important;
+    border-right: 1px solid rgba(255,255,255,0.05) !important;
+}
+
+[data-testid="stSidebar"] > div { padding-top: 0 !important; }
+
+.block-container {
+    padding: 0 !important;
+    max-width: 100% !important;
+}
+
+#MainMenu, footer, header { visibility: hidden; }
+
+/* ---- Status pill with pulse ---- */
+@keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+    50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(239,68,68,0); }
+}
+
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: rgba(239,68,68,0.08);
+    border: 1px solid rgba(239,68,68,0.18);
+    border-radius: 999px;
+    padding: 4px 12px 4px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #f87171;
+}
+
+.pulse-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ef4444;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* ---- Page header ---- */
+.page-header {
+    padding: 28px 40px 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.header-title {
+    font-size: 38px;
+    font-weight: 900;
+    letter-spacing: -1.5px;
+    background: linear-gradient(135deg, #f8fafc 0%, #94a3b8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+}
+
+.header-sub {
+    font-size: 12px;
+    color: #4a4a62;
+    font-weight: 400;
+    margin-top: 6px;
+    letter-spacing: 0.2px;
+}
+
+/* ---- Sidebar header ---- */
+.sidebar-header {
+    padding: 24px 20px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    margin-bottom: 6px;
+}
+
+.sidebar-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #e2e2f0;
+    letter-spacing: -0.3px;
+}
+
+.sidebar-eyebrow {
+    font-size: 10px;
+    color: #3a3a52;
+    font-weight: 500;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 5px;
+}
+
+/* ---- Deduction strip (top of sidebar) ---- */
+.deduction-strip {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    margin-bottom: 4px;
+}
+
+.deduction-item {
+    margin-bottom: 14px;
+}
+
+.deduction-item:last-child { margin-bottom: 0; }
+
+.d-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    color: #3a3a52;
+    margin-bottom: 3px;
+}
+
+.d-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e2e2f0;
+    letter-spacing: -0.3px;
+}
+
+/* ---- Confidence bar ---- */
+.conf-bar-wrap { margin-bottom: 16px; padding: 0 20px; }
+.conf-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    font-weight: 500;
+    color: #3a3a52;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    margin-bottom: 7px;
+}
+.conf-pct { color: #6b6b8a; font-family: 'JetBrains Mono', monospace; }
+.conf-track {
+    height: 2px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.conf-fill {
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #dc2626, #ea580c, #d97706);
+}
+
+/* ---- Suspect rows ---- */
+.suspect-section {
+    padding: 12px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.section-eyebrow {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #2a2a3a;
+    margin-bottom: 12px;
+}
+
+.s-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px;
+    border-radius: 6px;
+    margin-bottom: 2px;
+    cursor: default;
+    transition: background 0.12s;
+}
+
+.s-row:hover { background: rgba(255,255,255,0.03); }
+
+.s-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.s-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: #c8c8e0;
+    flex: 1;
+    letter-spacing: -0.2px;
+}
+
+.s-pct {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: #3a3a52;
+}
+
+.s-bar {
+    width: 40px;
+    height: 2px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.s-bar-fill {
+    height: 2px;
+    border-radius: 999px;
+}
+
+/* ---- Main content area ---- */
+.main-pad { padding: 28px 40px; }
+
+.section-head {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #2e2e44;
+    margin-bottom: 14px;
+}
+
+/* ---- Glass panel ---- */
+.glass {
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* ---- Narration panel ---- */
+.narration {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 10px;
+    padding: 18px 22px;
+    font-family: 'Inter', sans-serif;
+    font-size: 13.5px;
+    font-style: italic;
+    color: #a8a8c0;
+    line-height: 1.8;
+    margin: 14px 0;
+}
+
+/* ---- Room tag ---- */
+.room-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(217,119,6,0.07);
+    border: 1px solid rgba(217,119,6,0.15);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #d97706;
+    margin: 10px 0;
+}
+
+.room-tag-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #d97706;
+}
+
+/* ---- Thought log ---- */
+.log-panel {
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 10px;
+    padding: 18px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: #3a3a56;
+    line-height: 2;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.log-line { color: #5a5a78; }
+.log-line-active { color: #9090b0; }
+.log-prompt { color: #2a2a40; margin-right: 8px; }
+
+/* ---- Verdict ---- */
+.verdict {
+    border-radius: 12px;
+    padding: 24px 26px;
+    margin-bottom: 16px;
+    border: 1px solid transparent;
+}
+
+.verdict-ok {
+    background: rgba(34,197,94,0.05);
+    border-color: rgba(34,197,94,0.12);
+}
+
+.verdict-fail {
+    background: rgba(239,68,68,0.05);
+    border-color: rgba(239,68,68,0.12);
+}
+
+.verdict-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+
+.verdict-ok .verdict-label { color: #22c55e; }
+.verdict-fail .verdict-label { color: #ef4444; }
+
+.verdict-main {
+    font-size: 16px;
+    font-weight: 600;
+    color: #e2e2f0;
+    letter-spacing: -0.4px;
+    line-height: 1.5;
+}
+
+.verdict-truth {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #3a3a52;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}
+
+/* ---- Buttons ---- */
+div[data-testid="stButton"] > button {
+    background: rgba(255,255,255,0.04) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    color: #a0a0c0 !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.2px !important;
+    border-radius: 8px !important;
+    padding: 10px 18px !important;
+    width: 100% !important;
+    transition: all 0.15s ease !important;
+}
+
+div[data-testid="stButton"] > button:hover {
+    background: rgba(255,255,255,0.07) !important;
+    border-color: rgba(255,255,255,0.14) !important;
+    color: #e2e2f0 !important;
+}
+
+div[data-testid="stButton"] > button[kind="primary"] {
+    background: linear-gradient(135deg, #dc2626, #ea580c) !important;
+    border: none !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+}
+
+div[data-testid="stButton"] > button[kind="primary"]:hover {
+    background: linear-gradient(135deg, #ef4444, #f97316) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 20px rgba(220,38,38,0.25) !important;
+}
+
+/* ---- Selectbox ---- */
+div[data-testid="stSelectbox"] label {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    letter-spacing: 2px !important;
+    text-transform: uppercase !important;
+    color: #2e2e44 !important;
+}
+
+div[data-testid="stSelectbox"] > div > div {
+    background: rgba(255,255,255,0.03) !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+    border-radius: 8px !important;
+    color: #c0c0d8 !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 13px !important;
+}
+
+/* ---- Camera widget ---- */
+div[data-testid="stCameraInput"] label {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    letter-spacing: 2px !important;
+    text-transform: uppercase !important;
+    color: #2e2e44 !important;
+}
+
+div[data-testid="stCameraInput"] > div {
+    border: 1px solid rgba(255,255,255,0.06) !important;
+    border-radius: 10px !important;
+    background: rgba(0,0,0,0.3) !important;
+    overflow: hidden !important;
+}
+
+/* ---- Scrollbars ---- */
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.08);
+    border-radius: 999px;
+}
+
+/* ---- Divider override ---- */
+hr { border-color: rgba(255,255,255,0.05) !important; }
+</style>
+""", unsafe_allow_html=True)
 
 
 class LiddyProcessor(VideoProcessorBase):
-    """
-    Runs YOLO on every 10th frame in a background thread.
-    The video stays smooth. The Inspector stays informed.
-    She does not miss much. She misses 9 out of 10 frames. The 10th is enough.
-    """
+    # She runs continuously. She does not wait for permission.
     def __init__(self):
         self.detector    = None
         self.latest_dets = []
@@ -53,374 +483,6 @@ class LiddyProcessor(VideoProcessorBase):
             return list(self.latest_dets), self.frame_size
 
 
-# Clue-style. Crimson, gold, near-black, aged parchment.
-# Not a single default Streamlit blue survived this file.
-SUSPECT_COLORS = {
-    "Lord Blackwood":     "#1e1e6e",
-    "Lady Ashford":       "#6e1e6e",
-    "Dr. Pembrooke":      "#1e6e1e",
-    "Colonel Ravenswood": "#8b1a1a",
-    "Miss Thorne":        "#1e6e6e",
-    "Graves the Butler":  "#3a3a3a",
-}
-
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&display=swap');
-
-[data-testid="stApp"] {
-    background-color: #09060302;
-    background-image:
-        repeating-linear-gradient(
-            0deg, transparent, transparent 27px,
-            rgba(58,26,10,0.12) 27px, rgba(58,26,10,0.12) 28px
-        ),
-        radial-gradient(ellipse at top, #120a04 0%, #060402 100%);
-}
-[data-testid="stSidebar"] {
-    background: #070503;
-    border-right: 2px solid #2a1206;
-}
-[data-testid="stSidebar"] > div { padding-top: 0 !important; }
-.block-container { padding-top: 0 !important; padding-bottom: 2rem; max-width: 100% !important; }
-#MainMenu, footer, header { visibility: hidden; }
-
-/* ---- Sidebar dossier header ---- */
-.dossier-header {
-    background: linear-gradient(135deg, #8b1a1a 0%, #4a0808 100%);
-    padding: 22px 18px 16px;
-    margin: -1rem -1rem 1.2rem;
-    border-bottom: 3px solid #c8960c;
-}
-.dossier-title {
-    font-family: 'Playfair Display', Georgia, serif;
-    font-size: 1.25rem;
-    font-weight: 900;
-    color: #f4e8c1;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    margin: 0;
-    line-height: 1.2;
-}
-.dossier-sub {
-    font-size: 0.58rem;
-    color: #c89090;
-    letter-spacing: 4px;
-    text-transform: uppercase;
-    font-family: 'Courier New', monospace;
-    margin-top: 5px;
-}
-
-/* ---- Case file main header ---- */
-.case-header {
-    border-left: 6px solid #8b1a1a;
-    background: linear-gradient(90deg, #0f0804 0%, #07050302 100%);
-    padding: 22px 28px 18px;
-    margin-bottom: 1.2rem;
-    position: relative;
-}
-.case-eyebrow {
-    font-family: 'Courier New', monospace;
-    font-size: 0.6rem;
-    letter-spacing: 4px;
-    color: #5a3010;
-    text-transform: uppercase;
-    margin-bottom: 6px;
-}
-.case-title {
-    font-family: 'Playfair Display', Georgia, serif;
-    font-size: 2.6rem;
-    font-weight: 900;
-    color: #f4e8c1;
-    letter-spacing: 5px;
-    text-transform: uppercase;
-    line-height: 1;
-    margin: 0;
-}
-.case-tagline {
-    font-family: Georgia, serif;
-    font-style: italic;
-    font-size: 0.85rem;
-    color: #6a4a28;
-    margin-top: 8px;
-    letter-spacing: 0.5px;
-}
-.case-stamp {
-    position: absolute;
-    top: 18px;
-    right: 24px;
-    border: 2px solid #c8960c;
-    color: #c8960c;
-    font-size: 0.55rem;
-    letter-spacing: 3px;
-    padding: 5px 10px;
-    font-family: Georgia, serif;
-    font-weight: bold;
-    text-transform: uppercase;
-    transform: rotate(3deg);
-    opacity: 0.9;
-}
-.rule {
-    border: none;
-    border-top: 1px solid #2a1206;
-    margin: 1rem 0 0;
-}
-
-/* ---- Deduction trio (prime suspect / weapon / location) ---- */
-.deduction-trio {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 16px;
-}
-.deduction-card {
-    flex: 1;
-    border: 1px solid #2a1206;
-    border-top: 3px solid #8b1a1a;
-    background: #0c0704;
-    padding: 10px 12px;
-}
-.deduction-label {
-    font-family: 'Courier New', monospace;
-    font-size: 0.55rem;
-    letter-spacing: 3px;
-    color: #5a3010;
-    text-transform: uppercase;
-    margin-bottom: 5px;
-}
-.deduction-value {
-    font-family: 'Playfair Display', Georgia, serif;
-    font-size: 0.92rem;
-    color: #f4e8c1;
-    font-weight: bold;
-    line-height: 1.3;
-}
-
-/* ---- Confidence meter ---- */
-.meter-label {
-    font-family: 'Courier New', monospace;
-    font-size: 0.55rem;
-    letter-spacing: 3px;
-    color: #5a3010;
-    text-transform: uppercase;
-    margin-bottom: 6px;
-}
-div[data-testid="stProgress"] > div {
-    background: #1a0c04 !important;
-    border-radius: 0 !important;
-    height: 6px !important;
-}
-div[data-testid="stProgress"] > div > div {
-    background: linear-gradient(90deg, #8b1a1a, #c8960c) !important;
-    border-radius: 0 !important;
-}
-
-/* ---- Suspect board cards ---- */
-.suspect-card {
-    margin-bottom: 7px;
-    overflow: hidden;
-    border: 1px solid #1e0e04;
-}
-.suspect-banner { height: 5px; }
-.suspect-body {
-    background: #0c0704;
-    padding: 7px 10px 8px;
-}
-.suspect-name {
-    font-family: Georgia, serif;
-    font-size: 0.72rem;
-    font-weight: bold;
-    color: #d4c090;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-.suspect-pct {
-    font-family: 'Courier New', monospace;
-    font-size: 0.6rem;
-    color: #5a3a1a;
-    margin-top: 2px;
-}
-.suspect-bar-bg { background: #1a0c04; height: 3px; margin-top: 5px; }
-.suspect-bar-fill { height: 3px; }
-
-/* ---- Section label ---- */
-.section-label {
-    font-family: 'Courier New', monospace;
-    font-size: 0.58rem;
-    letter-spacing: 4px;
-    color: #5a3010;
-    text-transform: uppercase;
-    border-bottom: 1px solid #1e0e04;
-    padding-bottom: 6px;
-    margin-bottom: 12px;
-}
-
-/* ---- Camera / evidence frame ---- */
-.evidence-label {
-    font-family: 'Courier New', monospace;
-    font-size: 0.58rem;
-    letter-spacing: 4px;
-    color: #5a3010;
-    text-transform: uppercase;
-    margin-bottom: 6px;
-}
-
-/* ---- Inspector narration ---- */
-.narration-box {
-    border: 1px solid #2a1206;
-    border-left: 4px solid #8b1a1a;
-    background: #0c0704;
-    padding: 14px 16px;
-    font-family: Georgia, serif;
-    font-style: italic;
-    color: #c8a870;
-    font-size: 0.88rem;
-    line-height: 1.75;
-    margin: 10px 0;
-}
-
-/* ---- Room detected badge ---- */
-.room-badge {
-    background: #0c0900;
-    border: 1px solid #5a4010;
-    border-left: 4px solid #c8960c;
-    padding: 8px 14px;
-    font-family: Georgia, serif;
-    font-size: 0.82rem;
-    color: #c8960c;
-    margin: 8px 0;
-    letter-spacing: 0.5px;
-}
-
-/* ---- Notebook (thought log) ---- */
-.notebook-wrap {
-    background: #f5e9c4;
-    background-image: repeating-linear-gradient(
-        transparent, transparent 27px, #d8c898 27px, #d8c898 28px
-    );
-    border: 1px solid #b8a060;
-    border-left: 5px solid #8b1a1a;
-    padding: 14px 16px 14px 18px;
-    font-family: Georgia, serif;
-    font-style: italic;
-    color: #1e1008;
-    font-size: 0.82rem;
-    line-height: 28px;
-    max-height: 300px;
-    overflow-y: auto;
-}
-.notebook-eyebrow {
-    font-family: 'Courier New', monospace;
-    font-style: normal;
-    font-size: 0.58rem;
-    letter-spacing: 4px;
-    text-transform: uppercase;
-    color: #8b1a1a;
-    border-bottom: 1px solid #c8960c;
-    padding-bottom: 5px;
-    margin-bottom: 8px;
-    line-height: 1;
-}
-
-/* ---- Buttons ---- */
-div[data-testid="stButton"] > button {
-    background: #0c0704 !important;
-    border: 1px solid #3a1a0a !important;
-    color: #c8960c !important;
-    font-family: Georgia, serif !important;
-    font-size: 0.75rem !important;
-    letter-spacing: 2px !important;
-    text-transform: uppercase !important;
-    border-radius: 0 !important;
-    padding: 10px 18px !important;
-    width: 100% !important;
-    transition: all 0.15s !important;
-}
-div[data-testid="stButton"] > button:hover {
-    background: #180e06 !important;
-    border-color: #c8960c !important;
-}
-div[data-testid="stButton"] > button[kind="primary"] {
-    background: #8b1a1a !important;
-    border: 1px solid #c8960c !important;
-    color: #f4e8c1 !important;
-}
-div[data-testid="stButton"] > button[kind="primary"]:hover {
-    background: #a02020 !important;
-}
-
-/* ---- Selectbox ---- */
-div[data-testid="stSelectbox"] label {
-    color: #5a3010 !important;
-    font-family: 'Courier New', monospace !important;
-    font-size: 0.6rem !important;
-    letter-spacing: 3px !important;
-    text-transform: uppercase !important;
-}
-div[data-testid="stSelectbox"] > div > div {
-    background: #0c0704 !important;
-    border: 1px solid #3a1a0a !important;
-    border-radius: 0 !important;
-    color: #d4c090 !important;
-    font-family: Georgia, serif !important;
-}
-
-/* ---- Verdict ---- */
-.verdict-wrap {
-    padding: 22px 24px;
-    border: 1px solid #3a1a0a;
-    margin-bottom: 16px;
-}
-.verdict-correct { border-top: 6px solid #2a6a2a; background: #080e08; }
-.verdict-wrong   { border-top: 6px solid #8b1a1a; background: #0e0806; }
-.verdict-heading {
-    font-family: 'Playfair Display', Georgia, serif;
-    font-size: 1.3rem;
-    font-weight: 900;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    margin-bottom: 12px;
-}
-.verdict-correct .verdict-heading { color: #5a9a5a; }
-.verdict-wrong   .verdict-heading { color: #c84a4a; }
-.verdict-line {
-    font-family: Georgia, serif;
-    font-size: 0.88rem;
-    color: #d4c090;
-    margin-bottom: 6px;
-    line-height: 1.6;
-}
-.verdict-truth {
-    font-family: 'Courier New', monospace;
-    font-size: 0.72rem;
-    color: #5a3a1a;
-    margin-top: 12px;
-    padding-top: 10px;
-    border-top: 1px solid #2a1206;
-    letter-spacing: 1px;
-}
-
-/* ---- Scrollbars ---- */
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: #07050302; }
-::-webkit-scrollbar-thumb { background: #3a1a0a; }
-
-/* ---- Camera widget ---- */
-div[data-testid="stCameraInput"] label {
-    color: #5a3010 !important;
-    font-family: 'Courier New', monospace !important;
-    font-size: 0.6rem !important;
-    letter-spacing: 3px !important;
-    text-transform: uppercase !important;
-}
-div[data-testid="stCameraInput"] > div {
-    border: 1px solid #2a1206 !important;
-    border-radius: 0 !important;
-    background: #080604 !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
 def _new_game():
     from game import mystery as mys
     from game import state as st_db
@@ -433,11 +495,11 @@ def _new_game():
     mys.save(m)
     sid = st_db.start_session(m)
 
-    st.session_state.mystery     = m
-    st.session_state.session_id  = sid
-    st.session_state.liddy       = InspectorLiddy(m, sid)
-    st.session_state.detector    = YOLODetector()
-    st.session_state.lidar       = LIDARMap()
+    st.session_state.mystery        = m
+    st.session_state.session_id     = sid
+    st.session_state.liddy          = InspectorLiddy(m, sid)
+    st.session_state.detector       = YOLODetector()
+    st.session_state.lidar          = LIDARMap()
     st.session_state.game_over      = False
     st.session_state.accusation     = None
     st.session_state.last_narration = None
@@ -445,20 +507,21 @@ def _new_game():
     st.session_state.last_room      = None
 
 
-def _suspect_card(name, prob):
-    color   = SUSPECT_COLORS.get(name, "#3a3a3a")
-    bar_pct = int(prob * 100)
-    st.markdown(
-        f"<div class='suspect-card'>"
-        f"<div class='suspect-banner' style='background:{color};'></div>"
-        f"<div class='suspect-body'>"
-        f"<div class='suspect-name'>{name}</div>"
-        f"<div class='suspect-pct'>{bar_pct}% probability</div>"
-        f"<div class='suspect-bar-bg'>"
-        f"<div class='suspect-bar-fill' style='width:{bar_pct}%;background:{color};'></div>"
-        f"</div></div></div>",
-        unsafe_allow_html=True,
-    )
+def _suspect_rows(probs):
+    rows = ""
+    for name, prob in sorted(probs.items(), key=lambda x: -x[1]):
+        color   = SUSPECT_COLORS.get(name, "#64748b")
+        pct     = int(prob * 100)
+        bar_w   = max(pct, 2)
+        rows += (
+            f"<div class='s-row'>"
+            f"<div class='s-dot' style='background:{color};'></div>"
+            f"<div class='s-name'>{name}</div>"
+            f"<div class='s-bar'><div class='s-bar-fill' style='width:{bar_w}%;background:{color};'></div></div>"
+            f"<div class='s-pct'>{pct}%</div>"
+            f"</div>"
+        )
+    return rows
 
 
 def main():
@@ -469,84 +532,85 @@ def main():
     detector = st.session_state.detector
     lidar    = st.session_state.lidar
     state    = liddy.state()
+    conf_pct = int(state["confidence"] * 100)
 
     # ---- Sidebar ----
     with st.sidebar:
         st.markdown(
-            "<div class='dossier-header'>"
-            "<div class='dossier-title'>Inspector Liddy</div>"
-            "<div class='dossier-sub'>Private Detective &nbsp;|&nbsp; Active Case</div>"
+            "<div class='sidebar-header'>"
+            "<div class='sidebar-eyebrow'>Active Investigation</div>"
+            "<div class='sidebar-title'>Inspector Liddy</div>"
             "</div>",
             unsafe_allow_html=True,
         )
 
-        st.markdown("<div class='section-label'>Current Deduction</div>", unsafe_allow_html=True)
-
         st.markdown(
-            f"<div class='deduction-card' style='margin-bottom:8px;border-top-color:#8b1a1a;'>"
-            f"<div class='deduction-label'>Prime Suspect</div>"
-            f"<div class='deduction-value'>{state['suspect']}</div></div>"
-            f"<div class='deduction-card' style='margin-bottom:8px;border-top-color:#5a3010;'>"
-            f"<div class='deduction-label'>Weapon</div>"
-            f"<div class='deduction-value'>{state['weapon']}</div></div>"
-            f"<div class='deduction-card' style='margin-bottom:14px;border-top-color:#2a5a2a;'>"
-            f"<div class='deduction-label'>Location</div>"
-            f"<div class='deduction-value'>{state['room']}</div></div>",
+            f"<div class='deduction-strip'>"
+            f"<div class='deduction-item'>"
+            f"<div class='d-label'>Prime Suspect</div>"
+            f"<div class='d-value'>{state['suspect']}</div>"
+            f"</div>"
+            f"<div class='deduction-item'>"
+            f"<div class='d-label'>Weapon</div>"
+            f"<div class='d-value'>{state['weapon']}</div>"
+            f"</div>"
+            f"<div class='deduction-item'>"
+            f"<div class='d-label'>Location</div>"
+            f"<div class='d-value'>{state['room']}</div>"
+            f"</div>"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
-        st.markdown("<div class='meter-label'>Certainty</div>", unsafe_allow_html=True)
-        st.progress(state["confidence"])
         st.markdown(
-            f"<p style='font-family:\"Courier New\",monospace;font-size:0.72rem;"
-            f"color:#c8960c;margin-top:4px;'>{state['confidence']:.1%}</p>",
+            f"<div class='conf-bar-wrap'>"
+            f"<div class='conf-label'>"
+            f"<span>Certainty</span>"
+            f"<span class='conf-pct'>{conf_pct}%</span>"
+            f"</div>"
+            f"<div class='conf-track'>"
+            f"<div class='conf-fill' style='width:{conf_pct}%;'></div>"
+            f"</div>"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("<div class='section-label'>Suspect Board</div>", unsafe_allow_html=True)
-
-        for name, prob in sorted(state["probs"]["suspects"].items(), key=lambda x: -x[1]):
-            _suspect_card(name, prob)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        llm_status = "Narrator active" if state["llm_ready"] else "Templates in use"
-        llm_color  = "#2a5a2a" if state["llm_ready"] else "#3a1a0a"
         st.markdown(
-            f"<p style='font-family:\"Courier New\",monospace;font-size:0.58rem;"
-            f"letter-spacing:2px;color:{llm_color};text-transform:uppercase;'>"
-            f"{llm_status}</p>",
+            f"<div class='suspect-section'>"
+            f"<div class='section-eyebrow'>Suspects</div>"
+            f"{_suspect_rows(state['probs']['suspects'])}"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
+        st.markdown("<div style='padding: 16px 20px;'>", unsafe_allow_html=True)
         if st.button("Open New Case", use_container_width=True):
             for k in list(st.session_state.keys()):
                 del st.session_state[k]
             st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---- Main header ----
+    # ---- Header ----
+    case_status = "Closed" if st.session_state.game_over else "Active"
     st.markdown(
-        "<div class='case-header'>"
-        "<div class='case-eyebrow'>Case File &nbsp;|&nbsp; Active Homicide Investigation</div>"
-        "<div class='case-title'>Inspector Liddy</div>"
-        "<div class='case-tagline'>"
-        "The death of Sir Edmund Hartley. One culprit. One weapon. One room. "
-        "She has seen worse. She has solved all of them."
-        "</div>"
-        "<div class='case-stamp'>Active</div>"
-        "<hr class='rule'>"
-        "</div>",
+        f"<div class='page-header'>"
+        f"<div>"
+        f"<div class='header-title'>Inspector Liddy</div>"
+        f"<div class='header-sub'>The death of Sir Edmund Hartley &nbsp;/&nbsp; Scan {state['scans']} complete</div>"
+        f"</div>"
+        f"<div class='status-pill'><div class='pulse-dot'></div>{case_status}</div>"
+        f"</div>",
         unsafe_allow_html=True,
     )
 
+    # ---- Main columns ----
     col_left, col_right = st.columns([3, 2], gap="large")
 
     with col_left:
-        st.markdown("<div class='section-label'>Crime Scene Surveillance</div>", unsafe_allow_html=True)
+        st.markdown("<div class='main-pad'>", unsafe_allow_html=True)
 
-        # Live feed -- YOLO runs on every 10th frame in the background thread.
-        # The user sees annotated video in real time. The Inspector sees everything.
+        st.markdown("<div class='section-head'>Live Scene Scan</div>", unsafe_allow_html=True)
+
         ctx = webrtc_streamer(
             key="liddy-cam",
             video_processor_factory=LiddyProcessor,
@@ -560,10 +624,7 @@ def main():
 
         if not st.session_state.game_over:
             if st.button("Scan Current Frame", use_container_width=True):
-                if ctx.video_processor:
-                    dets, (fw, fh) = ctx.video_processor.get_latest()
-                else:
-                    dets, fw, fh = [], 640, 480
+                dets, (fw, fh) = ctx.video_processor.get_latest() if ctx.video_processor else ([], (640, 480))
 
                 if dets:
                     from game.world import YOLO_TO_ROOM
@@ -574,103 +635,92 @@ def main():
                     st.session_state.last_narration = narration
                     st.session_state.last_dets      = dets
 
-                    detected_rooms = [YOLO_TO_ROOM[d["class"]] for d in dets if d["class"] in YOLO_TO_ROOM]
-                    st.session_state.last_room = (
-                        Counter(detected_rooms).most_common(1)[0][0] if detected_rooms else None
-                    )
+                    rooms = [YOLO_TO_ROOM[d["class"]] for d in dets if d["class"] in YOLO_TO_ROOM]
+                    st.session_state.last_room = Counter(rooms).most_common(1)[0][0] if rooms else None
                 else:
-                    st.session_state.last_narration = (
-                        "Nothing identified in the current frame. "
-                        "She waits. She is good at waiting."
-                    )
+                    st.session_state.last_narration = "Nothing identified. She waits. Patience is a tool, not a virtue."
                     st.session_state.last_dets = []
                     st.session_state.last_room = None
-
-            # Display the result of the last scan (persists across reruns)
-            if st.session_state.get("last_narration"):
-                st.markdown(
-                    f"<div class='narration-box'>{st.session_state.last_narration}</div>",
-                    unsafe_allow_html=True,
-                )
-
-            if st.session_state.get("last_room"):
-                st.markdown(
-                    f"<div class='room-badge'>"
-                    f"Location identified &nbsp;&mdash;&nbsp; <strong>{st.session_state.last_room}</strong>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-            elif st.session_state.get("last_dets"):
-                labels = [d["class"] for d in st.session_state.last_dets]
-                st.markdown(
-                    f"<div class='room-badge' style='border-left-color:#3a1a0a;color:#5a3a1a;'>"
-                    f"Detected: {', '.join(labels)}"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
         else:
             st.markdown(
-                "<div class='narration-box'>The investigation is closed. "
-                "Inspector Liddy has made her accusation. She does not revisit conclusions.</div>",
+                "<div class='narration'>Investigation closed. Inspector Liddy has made her accusation. She does not revisit conclusions.</div>",
+                unsafe_allow_html=True,
+            )
+
+        if st.session_state.get("last_narration"):
+            st.markdown(
+                f"<div class='narration'>{st.session_state.last_narration}</div>",
+                unsafe_allow_html=True,
+            )
+
+        if st.session_state.get("last_room"):
+            st.markdown(
+                f"<div class='room-tag'>"
+                f"<div class='room-tag-dot'></div>"
+                f"Location confirmed: <strong style='color:#f0c060;'>{st.session_state.last_room}</strong>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        elif st.session_state.get("last_dets"):
+            labels = [d["class"] for d in st.session_state.last_dets]
+            st.markdown(
+                f"<div class='room-tag' style='color:#6b6b8a;border-color:rgba(107,107,138,0.15);background:rgba(107,107,138,0.04);'>"
+                f"<div class='room-tag-dot' style='background:#6b6b8a;'></div>"
+                f"Detected: {', '.join(labels)}"
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("<div class='section-label'>Positional LIDAR</div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-head'>Positional LIDAR</div>", unsafe_allow_html=True)
         lidar_img = lidar.render()
         st.image(lidar_img, use_container_width=True)
 
+        st.markdown("</div>", unsafe_allow_html=True)
+
     with col_right:
-        st.markdown("<div class='section-label'>Investigation Controls</div>", unsafe_allow_html=True)
+        st.markdown("<div class='main-pad'>", unsafe_allow_html=True)
 
         if not st.session_state.game_over:
             from game.world import SUSPECTS
 
+            st.markdown("<div class='section-head'>Actions</div>", unsafe_allow_html=True)
+
             if st.button("Forensic Analysis", use_container_width=True):
                 note = liddy.run_forensics()
-                st.markdown(
-                    f"<div class='narration-box'>{note}</div>",
-                    unsafe_allow_html=True,
-                )
+                st.markdown(f"<div class='narration'>{note}</div>", unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            suspect_choice = st.selectbox(
-                "Select suspect to interrogate",
-                list(SUSPECTS.keys()),
-            )
+            suspect_choice = st.selectbox("Interrogate suspect", list(SUSPECTS.keys()))
             if st.button("Conduct Interrogation", use_container_width=True):
                 note = liddy.interrogate(suspect_choice)
-                st.markdown(
-                    f"<div class='narration-box'>{note}</div>",
-                    unsafe_allow_html=True,
-                )
+                st.markdown(f"<div class='narration'>{note}</div>", unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            if st.button("Close the Case -- Make Accusation", type="primary", use_container_width=True):
+            if st.button("Close the Case", type="primary", use_container_width=True):
                 result = liddy.accuse()
                 st.session_state.accusation = result
                 st.session_state.game_over  = True
                 st.rerun()
 
         if st.session_state.game_over and st.session_state.accusation:
-            res        = st.session_state.accusation
-            correct    = res["correct"]
-            css_extra  = "verdict-correct" if correct else "verdict-wrong"
-            heading    = "Case Closed. Correctly." if correct else "Case Closed. Incorrectly."
+            res     = st.session_state.accusation
+            correct = res["correct"]
+            cls     = "verdict-ok" if correct else "verdict-fail"
+            label   = "Correct" if correct else "Incorrect"
 
             st.markdown(
-                f"<div class='verdict-wrap {css_extra}'>"
-                f"<div class='verdict-heading'>{heading}</div>"
-                f"<div class='verdict-line'>"
-                f"<b>{res['suspect']}</b> &nbsp;|&nbsp; "
-                f"<b>{res['weapon']}</b> &nbsp;|&nbsp; "
-                f"<b>{res['room']}</b>"
-                f"</div>"
+                f"<div class='verdict {cls}'>"
+                f"<div class='verdict-label'>{label}</div>"
+                f"<div class='verdict-main'>"
+                f"{res['suspect']}<br>"
+                f"<span style='color:#6b6b8a;font-size:13px;font-weight:400;'>"
+                f"{res['weapon']} / {res['room']}"
+                f"</span></div>"
                 f"<div class='verdict-truth'>"
-                f"Truth &nbsp;&mdash;&nbsp; "
-                f"{res['actual']['culprit']} / {res['actual']['weapon']} / {res['actual']['room']}"
+                f"Truth: {res['actual']['culprit']} / {res['actual']['weapon']} / {res['actual']['room']}"
                 f"</div></div>",
                 unsafe_allow_html=True,
             )
@@ -681,25 +731,24 @@ def main():
             st.download_button(
                 "Download Case Report",
                 case_json,
-                file_name="inspector_liddy_case.json",
+                file_name="case_report.json",
                 mime="application/json",
                 use_container_width=True,
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("<div class='section-label'>Inspector's Notes</div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-head'>Inspector's Notes</div>", unsafe_allow_html=True)
 
         log_lines = "".join(
-            f"<div style='padding-bottom:28px;'>{line}</div>"
+            f"<div class='log-line'><span class='log-prompt'>&gt;</span>{line}</div>"
             for line in liddy.state()["log"]
         )
         st.markdown(
-            f"<div class='notebook-wrap'>"
-            f"<div class='notebook-eyebrow'>Liddy's Field Notes</div>"
-            f"{log_lines}"
-            f"</div>",
+            f"<div class='log-panel'>{log_lines}</div>",
             unsafe_allow_html=True,
         )
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
