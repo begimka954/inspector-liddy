@@ -160,7 +160,7 @@ def main():
                     detections = detector.detect(img_arr)
                     annotated  = detector.annotate(img_arr, detections)
 
-                    st.image(annotated, caption=f"Scan #{state['scans'] + 1}", use_column_width=True)
+                    st.image(annotated, caption=f"Scan #{state['scans'] + 1}", use_container_width=True)
 
                     lidar.update(detections, img_arr.shape[1], img_arr.shape[0])
                     narration = liddy.scan(detections)
@@ -188,7 +188,7 @@ def main():
         # LIDAR
         st.markdown("### LIDAR Positional Map")
         lidar_img = lidar.render()
-        st.image(lidar_img, use_column_width=True)
+        st.image(lidar_img, use_container_width=True)
 
     with col_right:
         st.markdown("### Inspector's Actions")
