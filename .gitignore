@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# YOLO downloads its weights here on first run
+*.pt
+
+# SQLite database and mystery file -- these are runtime state, not source
+data/game.db
+data/mystery.json
+data/case_report.json
+data/scenes/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS noise
+.DS_Store
+Thumbs.db
